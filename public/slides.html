@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>큐잇 — 슬라이드</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  #wrap{height:100%;display:flex;align-items:center;justify-content:center}
+  canvas{max-width:100%;max-height:100%;box-shadow:0 0 60px rgba(0,0,0,.6)}
+  #msg{color:#7E90AB;font-family:system-ui,sans-serif;font-size:15px;text-align:center;
+       line-height:1.8;padding:20px}
+</style>
+</head>
+<body>
+<div id="wrap"><div id="msg">발표자 화면에서 발표를 시작하면 슬라이드가 표시됩니다.<br>
+이 창을 프로젝터 화면으로 옮기고 F11로 전체화면을 켜십시오.</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script type="module">
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+import { loadPdf } from "./store.js";
+
+const wrap = document.getElementById("wrap");
+let doc = null, pending = null, rendering = false, currentPage = 1;
+
+const ch = new BroadcastChannel("cueit-slides");
+
+(async () => {
+  // ?demo=1 이면 체험용 샘플 슬라이드를 띄운다
+  const demo = new URLSearchParams(location.search).has("demo");
+  const blob = demo ? await (await fetch("demo/sample.pdf")).blob() : await loadPdf();
+  if (!blob) {
+    document.getElementById("msg").textContent = "슬라이드 PDF를 찾지 못했습니다. 1단계에서 먼저 업로드하십시오.";
+    return;
+  }
+  doc = await pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
+  ch.postMessage({ type: "ready" });
+  if (pending) render(pending);
+})();
+
+ch.onmessage = (e) => {
+  if (e.data?.type === "ping") {
+    ch.postMessage({ type: "pong" });
+    return;
+  }
+  if (e.data?.type === "goto") {
+    if (!doc) pending = e.data.page;
+    else render(e.data.page);
+  }
+};
+
+async function render(p) {
+  if (!doc || rendering) { pending = p; return; }
+  rendering = true;
+  currentPage = Math.min(Math.max(p, 1), doc.numPages);
+  try {
+    const page = await doc.getPage(currentPage);
+    const base = page.getViewport({ scale: 1 });
+    const scale = Math.min(window.innerWidth / base.width, window.innerHeight / base.height);
+    const vp = page.getViewport({ scale: scale * (window.devicePixelRatio || 1) });
+    const cv = document.createElement("canvas");
+    cv.width = vp.width; cv.height = vp.height;
+    cv.style.width = base.width * scale + "px";
+    cv.style.height = base.height * scale + "px";
+    await page.render({ canvasContext: cv.getContext("2d"), viewport: vp }).promise;
+    wrap.innerHTML = "";
+    wrap.appendChild(cv);
+  } finally {
+    rendering = false;
+    if (pending && pending !== p) { const q = pending; pending = null; render(q); }
+    else pending = null;
+  }
+}
+
+// 이 창에 포커스가 있을 때 눌린 키도 발표자 화면으로 넘긴다(리모컨 대응)
+document.addEventListener("keydown", (e) => {
+  ch.postMessage({ type: "key", key: e.key });
+  if ([" ", "ArrowRight", "ArrowLeft", "PageDown", "PageUp"].includes(e.key)) e.preventDefault();
+});
+window.addEventListener("resize", () => { if (doc) render(currentPage); });
+</script>
+</body>
+</html>
