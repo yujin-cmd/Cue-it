@@ -1,0 +1,7 @@
+{
+  "name": "cue-it",
+  "version": "1.0.0",
+  "description": "큐잇(Cue-it) - 발표 중 놓친 말을 알려주는 AI 큐카드",
+  "private": true,
+  "type": "module"
+}

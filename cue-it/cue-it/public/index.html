@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>큐잇 Cue-it — 발표 중 놓친 말을 알려주는 AI 큐카드</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-top">
+    <div class="brand">큐잇 <em>Cue-it</em></div>
+    <div class="saved" id="savedState">
+      <span class="sv-dot"></span>
+      <span id="savedText">아직 자료가 없습니다</span>
+    </div>
+  </div>
+  <nav class="stepper" id="stepper"></nav>
+</header>
+
+<!-- ── 1. 준비 ───────────────────────────── -->
+<section id="upload" class="screen active">
+  <h1>어떤 발표를 준비하십니까</h1>
+  <p class="lead">발표 유형을 고르고 <b>PDF로 저장</b>한 슬라이드와 대본을 넣으면, AI가 슬라이드마다
+     반드시 말해야 할 핵심을 뽑아 둡니다. 발표 중에는 아직 말하지 않은 것만 큐로 알려드립니다.</p>
+
+  <div class="demo-card">
+    <div class="dc-body">
+      <b>자료 없이 먼저 보시겠어요?</b>
+      <span>가상의 공모전 발표 「동네 공유 우산」으로, 큐잇이 발표 중에 어떻게 큐를 주는지 40초 동안 보여드립니다.
+        마이크나 파일이 없어도 됩니다.</span>
+    </div>
+    <div class="dc-btns">
+      <button id="demoAuto" class="primary">▶ 40초 자동 시연</button>
+      <button id="demoTry" class="ghost">샘플로 직접 해보기</button>
+    </div>
+  </div>
+
+  <div class="card typecard">
+    <label class="lbl">발표 유형</label>
+    <div class="types" id="typeList"></div>
+    <div class="typeinfo" id="typeInfo">유형을 고르면 기본 시간, 꼭 전달할 내용, 질문하는 사람이 그 상황에 맞게 바뀝니다.</div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <label class="lbl">슬라이드 PDF</label>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="pdfFile" accept="application/pdf" hidden>
+        <div class="dz-idle" id="dzIdle">
+          <div class="dz-icon">▤</div>
+          <div class="dz-title">슬라이드 PDF를 여기에 놓으십시오</div>
+          <div class="dz-sub">또는 눌러서 파일 선택</div>
+        </div>
+        <div class="dz-loaded" id="dzLoaded" hidden>
+          <canvas id="thumb" width="108" height="61"></canvas>
+          <div class="dz-info">
+            <div class="dz-name" id="pdfName"></div>
+            <div class="dz-pages" id="pdfPages"></div>
+            <button class="linkbtn" id="pdfChange">다른 파일 선택</button>
+          </div>
+        </div>
+      </div>
+      <div id="pdfInfo" class="hint">PowerPoint에서 파일 → 다른 이름으로 저장 → PDF 를 고르시면 됩니다.</div>
+    </div>
+    <div class="card">
+      <label class="lbl">발표 대본 <span class="opt">(없으면 비워두십시오)</span></label>
+      <textarea id="scriptBox" rows="8" placeholder="발표할 내용을 그대로 붙여넣으십시오."></textarea>
+    </div>
+  </div>
+
+  <button id="analyzeBtn" class="primary big" disabled>AI 분석 시작</button>
+  <div id="analyzeMsg" class="msg"></div>
+
+  <div class="browser-warn" id="browserWarn" hidden>
+    <span class="bw-icon">!</span>
+    <div class="bw-body">
+      <b>발표 중 실시간 추적을 쓰려면 Chrome·Edge에서 열어주세요</b>
+      <span>이 브라우저는 음성 인식을 지원하지 않습니다. 분석·검토·연습·리포트·질의응답은 그대로 사용할 수 있습니다.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ── 2. 검토 ───────────────────────────── -->
+<section id="review" class="screen">
+  <h1>핵심 항목을 확인하십시오</h1>
+  <p class="lead">AI가 뽑은 항목입니다. <b>필수</b> 항목을 말하지 않고 슬라이드를 넘기면 큐가 뜹니다.
+     직접 고치거나 지울 수 있습니다.</p>
+  <div id="gapBox" class="hide-when-blank"></div>
+  <div id="reviewList" class="hide-when-blank"></div>
+  <div class="row hide-when-blank">
+    <button id="toPractice" class="ghost">연습으로</button>
+    <button id="toPresent" class="primary">발표 시작 화면으로</button>
+  </div>
+</section>
+
+<!-- ── 3. 연습 ───────────────────────────── -->
+<section id="practice" class="screen">
+  <h1>예상 질문 연습</h1>
+  <div class="row levels hide-when-blank">
+    <button class="lvl" data-level="일반">🙂 일반</button>
+    <button class="lvl active" data-level="검증">😐 <span id="lvlAudience">청중</span></button>
+    <button class="lvl" data-level="압박">😈 압박</button>
+  </div>
+  <div class="mood-note" id="moodNote"></div>
+  <div id="weak" class="weak"></div>
+  <div id="qaLog" class="qalog hide-when-blank"></div>
+  <div class="answer-wrap hide-when-blank">
+    <div class="countdown" id="countdown" hidden><span id="cdNum">30</span><small>초</small></div>
+    <div class="row">
+      <textarea id="answerBox" rows="3" placeholder="답변을 입력하십시오."></textarea>
+      <button id="answerBtn" class="primary">답변</button>
+    </div>
+  </div>
+  <p class="note">AI는 답변을 대신 만들어 주지 않습니다. 실제 청중처럼 질문을 이어갑니다.</p>
+</section>
+
+<!-- ── 4. 발표 ───────────────────────────── -->
+<section id="present" class="screen">
+  <div id="preRun" class="hide-when-blank">
+    <h1>발표 준비</h1>
+    <div class="card">
+      <label class="lbl">목표 발표 시간</label>
+      <div class="row">
+        <input type="number" id="goalMin" value="7" min="1" max="60"> 분
+      </div>
+      <ul class="checklist">
+        <li>슬라이드 창을 열어 프로젝터 화면으로 옮기고 전체화면(F11)으로 두십시오.</li>
+        <li>이 창은 노트북 화면에 두십시오. 발표자만 봅니다.</li>
+        <li>방향키 또는 프레젠터 리모컨으로 슬라이드를 넘깁니다.</li>
+        <li><b>B</b> 또는 <b>마침표</b> 키는 「큐 주세요」입니다. 말이 막혔을 때 다음 문장을 보여줍니다.</li>
+      </ul>
+      <div class="row">
+        <button id="openSlides" class="ghost">슬라이드 창 열기</button>
+        <button id="startRun" class="primary">발표 시작</button>
+      </div>
+      <div id="micMsg" class="hint"></div>
+    </div>
+  </div>
+
+  <div id="runner" class="runner">
+    <div class="hud-top">
+      <div class="hud-left">
+        <span id="slideLabel">슬라이드 1</span>
+        <span class="mic" id="micDot" hidden><i></i>듣는 중</span>
+        <span class="conn" id="connState" data-on="false">슬라이드 창 없음</span>
+      </div>
+      <span id="clock" class="clock">0:00 / 7:00</span>
+    </div>
+
+    <div class="hud-prev"><canvas id="slidePrev" hidden></canvas></div>
+
+    <div id="alertBox" class="alert-box"></div>
+
+    <div class="hud-main">
+      <div class="col">
+        <div class="collab">이 슬라이드에서 말할 것</div>
+        <ul id="itemList" class="items"></ul>
+      </div>
+      <div class="col">
+        <div class="collab">다음 핵심</div>
+        <div id="nextLine" class="nextline">—</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="prevBtn" class="ghost">◀ 이전</button>
+      <button id="stuckBtn" class="stuck">큐 주세요</button>
+      <button id="nextBtn" class="ghost">다음 ▶</button>
+      <button id="skipBtn" class="skip" hidden>생략 슬라이드 건너뛰기</button>
+      <button id="endBtn" class="ghost end">발표 종료</button>
+    </div>
+    <div id="sttMsg" class="hint stt"></div>
+  </div>
+</section>
+
+<!-- ── 5. 리포트 ─────────────────────────── -->
+<section id="report" class="screen">
+  <h1>발표 리포트</h1>
+  <div id="reportBody"></div>
+</section>
+
+<!-- ── 6. 질의응답 ───────────────────────── -->
+<section id="qna" class="screen">
+  <h1>질의응답 지원</h1>
+  <p class="lead">질문을 받으면 <b>본인이 미리 준비한 근거와 키워드</b>가 있는 슬라이드를 찾아줍니다.
+     답변은 만들어 주지 않습니다.</p>
+
+  <div class="card hide-when-blank">
+    <label class="lbl">받은 질문</label>
+    <div class="row qrow">
+      <input type="text" id="qInput" placeholder="예) 방금 말씀하신 내용의 근거는 무엇입니까?">
+      <button id="qMic" class="ghost" title="질문 듣기">🎤 듣기</button>
+      <button id="qFind" class="primary">찾기</button>
+    </div>
+    <div id="qMicMsg" class="hint"></div>
+  </div>
+
+  <div id="qResult" class="qresult"></div>
+</section>
+
+<!-- 체험 자동 시연 설명 -->
+<div id="demoCap" class="demo-cap" hidden>
+  <span class="dc-tag">체험 시연</span>
+  <span id="demoCapText"></span>
+  <button id="demoStop" class="linkbtn">멈추기</button>
+</div>
+
+<!-- 큐 주세요 오버레이 -->
+<div id="stuckPanel" class="stuck-panel">
+  <div class="sp-inner">
+    <div class="sp-lbl">다음에 말할 내용</div>
+    <div id="spLine" class="sp-line"></div>
+    <div class="sp-lbl">핵심 키워드</div>
+    <div id="spKw" class="sp-kw"></div>
+    <button id="spClose" class="ghost">닫기</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
