@@ -12,8 +12,8 @@
 </style>
 </head>
 <body>
-<div id="wrap"><div id="msg">발표자 화면에서 발표를 시작하면 슬라이드가 표시됩니다.<br>
-이 창을 프로젝터 화면으로 옮기고 F11로 전체화면을 켜십시오.</div></div>
+<div id="wrap"><div id="msg">발표자 화면에서 발표를 시작하면 슬라이드가 표시돼요.<br>
+이 창을 프로젝터 화면으로 옮기고 F11로 전체화면을 켜 주세요.</div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script type="module">
@@ -32,7 +32,7 @@ const ch = new BroadcastChannel("cueit-slides");
   const demo = new URLSearchParams(location.search).has("demo");
   const blob = demo ? await (await fetch("demo/sample.pdf")).blob() : await loadPdf();
   if (!blob) {
-    document.getElementById("msg").textContent = "슬라이드 PDF를 찾지 못했습니다. 1단계에서 먼저 업로드하십시오.";
+    document.getElementById("msg").textContent = "슬라이드 PDF를 찾지 못했어요. 1단계에서 먼저 올려 주세요.";
     return;
   }
   doc = await pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;

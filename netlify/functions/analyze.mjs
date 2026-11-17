@@ -4,6 +4,7 @@ import { typeOf, LEVEL_GUIDE } from "../../public/presets.js";
 // mode: "slide"     → 그 슬라이드의 핵심 항목과 대본 문장
 // mode: "questions" → 취약 논리와 난이도별 예상 질문
 // mode: "gaps"      → 발표 유형에 꼭 있어야 하는데 자료에서 찾지 못한 내용
+// mode: "coach"     → 발표가 끝난 뒤, 발표 기록을 읽고 다음 연습을 위한 코칭
 //
 // type: 발표 유형(면접 발표, 업무 보고 등). public/presets.js 의 정의를 그대로 쓴다.
 // 유형 이름을 화면에서 받은 글자 그대로 프롬프트에 넣지 않고, 서버에 있는 정의에서 꺼내 쓴다.
@@ -107,6 +108,31 @@ ${typeBrief(t)}
 4. tip은 무엇을 보충하면 되는지 한 문장으로 씁니다. 발표 내용을 대신 써 주지 않습니다.
 5. 빠진 것이 없으면 "gaps": [] 를 출력합니다. 모든 출력은 한국어.`;
 
+const sysCoach = (t) => `당신은 발표 연습을 돕는 코치입니다.
+
+${typeBrief(t)}
+
+발표 한 번의 기록을 받아, 다음 연습에 바로 쓸 수 있는 코칭을 합니다.
+기록에는 목표 시간과 실제 시간, 슬라이드별로 전달한 핵심과 놓친 핵심, 머문 시간, 말이 막혀 도움을 요청한 횟수, 음성 인식으로 받아 적은 말이 들어 있습니다.
+
+반드시 아래 JSON만 출력하십시오. 코드펜스 금지.
+
+{
+  "summary": "이번 발표를 한 문장으로 정리",
+  "good": ["잘한 점"],
+  "fix": [{ "point": "고칠 점", "how": "어떻게 연습하면 되는지" }],
+  "next": "다음 연습에서 해볼 한 가지"
+}
+
+규칙:
+1. 기록에 있는 사실만 근거로 삼습니다. 기록에 없는 것을 짐작해서 말하지 않습니다.
+2. 점수나 등급을 매기지 않습니다.
+3. 발표 문장이나 답변을 대신 써 주지 않습니다. how에는 연습 방법만 씁니다.
+4. 받아 적은 말은 음성 인식 결과라서 같은 말이 겹치거나 틀린 글자가 있을 수 있습니다. 발음, 말투, 맞춤법은 지적하지 않습니다.
+5. 놓친 필수 핵심, 시간이 예상보다 크게 밀린 슬라이드, 말이 막힌 횟수를 우선으로 봅니다.
+6. good은 2개 이내, fix는 3개 이내. 고칠 점이 없으면 fix는 빈 배열로 둡니다.
+7. 각 항목은 한 문장. 발표자를 격려하는 따뜻한 말투의 한국어("~해요"체)로 씁니다.`;
+
 export default async (req) => {
   if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
@@ -124,6 +150,7 @@ export default async (req) => {
     const t = typeOf(b.type);
     if (b.mode === "questions") return await questions(key, b, t);
     if (b.mode === "gaps") return await gaps(key, b, t);
+    if (b.mode === "coach") return await coach(key, b, t);
     return await slide(key, b, t);
   } catch (e) {
     return json(
@@ -198,6 +225,25 @@ async function gaps(key, b, t) {
     out.push({ label, tip: String(g?.tip || "").slice(0, 120) });
   }
   return json({ gaps: out });
+}
+
+// 발표 후 코칭. 화면이 만든 발표 기록(글자)을 읽는다.
+async function coach(key, b, t) {
+  const record = String(b.record || "").slice(0, 6000);
+  if (!record.trim()) return json({ error: "발표 기록이 비어 있습니다." }, 400);
+  const p = await call(key, sysCoach(t), `## 발표 기록\n${record}`, 1000);
+  const str = (v, n) => String(v || "").slice(0, n);
+  return json({
+    coach: {
+      summary: str(p.summary, 200),
+      good: (Array.isArray(p.good) ? p.good : []).map((g) => str(g, 160)).filter(Boolean).slice(0, 2),
+      fix: (Array.isArray(p.fix) ? p.fix : [])
+        .map((f) => ({ point: str(f?.point, 120), how: str(f?.how, 200) }))
+        .filter((f) => f.point)
+        .slice(0, 3),
+      next: str(p.next, 200),
+    },
+  });
 }
 
 async function call(key, system, user, maxTokens) {

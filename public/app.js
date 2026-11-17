@@ -1,7 +1,7 @@
 import { evaluateSlide, currentLineIndex, normalize } from "./match.js";
-import { savePdf, loadPdf, saveDeck, loadDeck, saveReport, loadReports, saveType, loadType } from "./store.js";
+import { savePdf, loadPdf, saveDeck, loadDeck, saveReport, loadReports, updateLatestReport, saveType, loadType } from "./store.js";
 import { TYPES, TYPE_KEYS, typeOf, typeKey, levelKey, levelLabel } from "./presets.js";
-import { DEMO_DECK, DEMO_PDF, DEMO_SCRIPT } from "./demo/demo.js";
+import { DEMO_DECK, DEMO_PDF, DEMO_SCRIPT, DEMO_COACH, DEMO_QA, DEMO_ASK, DEMO_SCRIPT_TEXT } from "./demo/demo.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -65,12 +65,13 @@ function renderStepper() {
     $("#savedText").textContent = `${deck.title} · 슬라이드 ${deck.slides.length}장 저장됨`;
   } else {
     sv.classList.remove("on");
-    $("#savedText").textContent = "아직 자료가 없습니다";
+    $("#savedText").textContent = "아직 자료가 없어요";
   }
 }
 
 /* ══ 화면 전환 ══════════════════════════ */
 function go(id) {
+  if (demoEnded) stopDemo();
   if (!running) document.body.classList.remove("stage");
   curStep = id;
   if (id !== "practice") {
@@ -80,17 +81,30 @@ function go(id) {
     if (cd) cd.hidden = true;
   }
   $$(".screen").forEach((s) => s.classList.toggle("active", s.id === id));
+  enterMotion(id);
   renderStepper();
   renderBlank(id);
   window.scrollTo(0, 0);
 }
 
+// 화면을 열 때 내용이 차례로 올라오게 한다. 움직임이 끝나면 표시를 지워서, 이후 다시 그려도 반복되지 않는다.
+let enterTimer = null;
+function enterMotion(id) {
+  const sc = document.getElementById(id);
+  if (!sc) return;
+  $$(".screen.entering").forEach((s) => s.classList.remove("entering"));
+  void sc.offsetWidth;
+  sc.classList.add("entering");
+  clearTimeout(enterTimer);
+  enterTimer = setTimeout(() => sc.classList.remove("entering"), 1200);
+}
+
 // 자료가 없을 때 빈 화면 대신 안내를 보여준다
 const BLANK = {
-  review: ["검토할 항목이 아직 없습니다", "1단계에서 슬라이드와 대본을 넣으면, AI가 뽑은 핵심 항목을 여기서 직접 고칠 수 있습니다."],
-  practice: ["연습할 자료가 없습니다", "발표 내용을 알아야 청중처럼 질문할 수 있습니다. 먼저 자료를 넣어주십시오."],
-  present: ["발표할 자료가 없습니다", "슬라이드와 핵심 항목이 준비되면 실전 화면이 열립니다."],
-  qna: ["찾을 자료가 없습니다", "미리 준비한 근거가 있어야 질문에 맞는 슬라이드를 찾아드릴 수 있습니다."],
+  review: ["검토할 항목이 아직 없어요", "1단계에서 슬라이드와 대본을 넣으면, AI가 뽑은 핵심 항목을 여기서 직접 고칠 수 있어요."],
+  practice: ["연습할 자료가 없어요", "발표 내용을 알아야 청중처럼 질문할 수 있어요. 먼저 자료를 넣어 주세요."],
+  present: ["발표할 자료가 없어요", "슬라이드와 핵심 항목이 준비되면 실전 화면이 열려요."],
+  qna: ["찾을 자료가 없어요", "미리 준비한 근거가 있어야 질문에 맞는 슬라이드를 찾아드릴 수 있어요."],
 };
 
 function renderBlank(id) {
@@ -105,8 +119,10 @@ function renderBlank(id) {
   const d = document.createElement("div");
   d.className = "blank";
   d.innerHTML = `<h3>${BLANK[id][0]}</h3><p>${BLANK[id][1]}</p>
-    <button class="primary">1단계로 가기</button>`;
-  d.querySelector("button").onclick = () => go("upload");
+    <button class="primary">1단계로 가기</button>
+    <button class="ghost">샘플로 먼저 해보기</button>`;
+  d.querySelector("button.primary").onclick = () => go("upload");
+  d.querySelector("button.ghost").onclick = tryDemo;
   sec.appendChild(d);
 }
 
@@ -117,7 +133,8 @@ function persist() {
 
 /* ══ 체험하기 ═══════════════════════════
    미리 분석해 둔 가상의 발표로 큐잇을 바로 써 본다. AI를 부르지 않는다.
-   · 자동 시연: 말하기 → 빠뜨림 큐 → 큐 주세요 → 시간 큐 → 리포트를 40초 안에 보여준다
+   · 자동 시연: 준비 → 검토 → 연습 → 발표 → 리포트 → 질의응답 여섯 단계를 차례로 보여준다(약 2분).
+     보는 사람이 잠깐 멈추거나 다음 단계로 넘길 수 있다.
    · 직접 해보기: 샘플 자료로 검토·연습·발표를 직접 해 본다 */
 let userDeck = null;   // 체험을 시작하기 전의 내 자료. 체험이 끝나면 되돌린다.
 
@@ -137,14 +154,15 @@ function enterDemo() {
 }
 
 function exitDemo() {
-  demoToken++;
+  stopDemo();
   if (running) endRun();
-  hideCaption();
   deck = userDeck || loadDeck();
   userDeck = null;
   previewKey = "";
   applyType();
   $("#qResult").innerHTML = "";
+  $("#qInput").value = "";
+  $("#answerBox").value = "";
   if (deck) {
     renderReview();
     renderPractice();
@@ -155,31 +173,296 @@ function exitDemo() {
 }
 
 function tryDemo() {
+  stopDemo();
   enterDemo();
   go("review");
 }
 
-function autoDemo() {
-  enterDemo();
-  go("present");
-  beginRun(true);
-  playDemo();
-}
-
-$("#demoAuto").onclick = autoDemo;
-$("#demoTry").onclick = tryDemo;
-
-let demoToken = 0;
+/* ── 자동 시연 ─────────────────────────── */
+let demoToken = 0;       // 시연을 새로 시작하거나 멈출 때마다 바뀐다. 예전 시연이 뒤늦게 화면을 건드리지 않게 한다.
+let demoOn = false;      // 자동 시연이 진행 중
+let demoPaused = false;  // 잠깐 멈춤
+let demoSkip = false;    // 지금 단계를 끝까지 빨리 넘기는 중
+let demoEnded = false;   // 시연이 끝나고 마지막 안내가 떠 있는 상태
+let pauseAt = 0;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function playDemo() {
-  const my = ++demoToken;
-  const alive = () => my === demoToken && running;
+// 안내 문구를 읽는 데 필요한 시간. 글자 수에 맞춘다.
+function readMs(t) {
+  return Math.min(6500, Math.max(3200, 1200 + t.length * 65));
+}
+
+// ms만큼 기다린다. 멈춤 중에는 시간이 흐르지 않고, 건너뛰기를 누르면 바로 끝난다.
+async function dwait(ms, ok) {
+  let left = ms;
+  let last = performance.now();
+  while (left > 0) {
+    if (!ok() || demoSkip) return;
+    await sleep(50);
+    const now = performance.now();
+    if (!demoPaused) left -= now - last;
+    last = now;
+  }
+}
+
+function caption(t, ms) {
+  const cap = $("#demoCap");
+  $("#demoCapText").textContent = t;
+  cap.hidden = false;
+  cap.classList.remove("pop");
+  void cap.offsetWidth;            // 문구가 바뀔 때마다 눈에 띄게 한 번 튀게 한다
+  cap.classList.add("pop");
+  const bar = $("#demoBar");       // 다음 장면까지 남은 시간
+  bar.style.animation = "none";
+  void bar.offsetWidth;
+  bar.style.animation = ms ? `capbar ${ms}ms linear forwards` : "none";
+}
+function hideCaption() {
+  $("#demoCap").hidden = true;
+}
+
+// 안내 문구를 띄우고 읽을 시간만큼 기다린다
+async function tell(t, ok, ms) {
+  ms = ms ?? readMs(t);
+  caption(t, ms);
+  await dwait(ms, ok);
+}
+// 안내 문구를 띄운 채로 화면 동작(fn)을 보여준다
+async function tellWhile(t, ok, fn) {
+  const ms = readMs(t);
+  caption(t, ms);
+  const t0 = performance.now();
+  await fn();
+  await dwait(Math.max(900, ms - (performance.now() - t0)), ok);
+}
+
+// 지금 설명하는 곳을 테두리로 짚어 준다
+function spot(target) {
+  clearSpot();
+  const el = typeof target === "string" ? $(target) : target;
+  if (!el) return;
+  el.classList.add("demo-spot");
+  // 안내 문구 아래쪽 빈 곳에 들어오도록 화면을 옮긴다. 이미 다 보이면 그대로 둔다.
+  const r = el.getBoundingClientRect();
+  const cap = $("#demoCap");
+  const top = (cap.hidden ? 0 : cap.getBoundingClientRect().bottom) + 24;
+  const bottom = window.innerHeight - 24;
+  if (r.top >= top && r.bottom <= bottom) return;
+  const room = bottom - top;
+  const dy = r.height >= room ? r.top - top : r.top - (top + (room - r.height) / 2);
+  window.scrollBy({ top: dy, behavior: "smooth" });
+}
+function clearSpot() {
+  $$(".demo-spot").forEach((e) => e.classList.remove("demo-spot"));
+}
+
+// 입력 칸에 글자가 하나씩 쳐지는 모습
+async function typeInto(el, text, ok) {
+  for (let i = 1; i <= text.length; i++) {
+    if (!ok()) return;
+    if (demoSkip) break;
+    el.value = text.slice(0, i);
+    await dwait(40, ok);
+  }
+  if (ok()) el.value = text;
+}
+
+function setPaused(on) {
+  if (demoPaused === on) return;
+  demoPaused = on;
+  $("#demoCap").classList.toggle("paused", on);
+  $("#demoPause").textContent = on ? "▶ 계속" : "⏸ 잠깐 멈춤";
+  if (on) pauseAt = Date.now();
+  else if (running) {
+    // 멈춘 시간만큼 발표 시계를 뒤로 민다
+    const d = Date.now() - pauseAt;
+    startTs += d;
+    if (slideEnter[cur]) slideEnter[cur] += d;
+  }
+}
+
+function setCapMode(mode) {
+  const end = mode === "end";
+  $("#demoCap").classList.toggle("end", end);
+  $("#demoPause").hidden = end;
+  $("#demoNext").hidden = end;
+  $("#demoStop").hidden = end;
+  $("#demoEnd").hidden = !end;
+}
+
+/* 1단계 준비 장면은 화면에 가짜 입력을 보여주므로, 끝나면 사용자가 넣어 둔 것을 그대로 되돌린다 */
+let upSnap = null;
+
+function snapUpload() {
+  const cv = $("#thumb");
+  let thumb = null;
+  if (cv.width && cv.height) {
+    thumb = document.createElement("canvas");
+    thumb.width = cv.width;
+    thumb.height = cv.height;
+    thumb.getContext("2d").drawImage(cv, 0, 0);
+  }
+  upSnap = {
+    script: $("#scriptBox").value,
+    idleHidden: $("#dzIdle").hidden,
+    loadedHidden: $("#dzLoaded").hidden,
+    dzLoaded: dz.classList.contains("loaded"),
+    name: $("#pdfName").textContent,
+    pages: $("#pdfPages").textContent,
+    info: $("#pdfInfo").textContent,
+    msg: $("#analyzeMsg").textContent,
+    thumb,
+    tw: cv.style.width,
+    th: cv.style.height,
+  };
+}
+
+function restoreUpload() {
+  $("#analyzeBtn").classList.remove("demo-live");
+  if (!upSnap) return;
+  const s = upSnap;
+  upSnap = null;
+  $("#scriptBox").value = s.script;
+  $("#dzIdle").hidden = s.idleHidden;
+  $("#dzLoaded").hidden = s.loadedHidden;
+  dz.classList.toggle("loaded", s.dzLoaded);
+  $("#pdfName").textContent = s.name;
+  $("#pdfPages").textContent = s.pages;
+  $("#pdfInfo").textContent = s.info;
+  $("#analyzeMsg").textContent = s.msg;
+  if (s.thumb) {
+    const cv = $("#thumb");
+    cv.width = s.thumb.width;
+    cv.height = s.thumb.height;
+    cv.style.width = s.tw;
+    cv.style.height = s.th;
+    cv.getContext("2d").drawImage(s.thumb, 0, 0);
+  }
+  renderTypes();
+  updateAnalyzeBtn();
+}
+
+// 샘플 PDF가 올라간 것처럼 보여준다(실제로 저장하거나 분석하지 않는다)
+async function showDemoPdf(ok) {
+  $("#pdfName").textContent = "동네 공유 우산.pdf";
+  $("#pdfPages").textContent = `슬라이드 ${deck.slides.length}장`;
+  $("#dzIdle").hidden = true;
+  $("#dzLoaded").hidden = false;
+  dz.classList.add("loaded");
+  $("#pdfInfo").textContent = "슬라이드를 모두 읽었어요. 대본을 넣고 분석을 시작해 주세요.";
+  try {
+    const doc = await ensurePreviewDoc();
+    const pg = await doc.getPage(1);
+    const base = pg.getViewport({ scale: 1 });
+    const w = 108, dpr = window.devicePixelRatio || 1;
+    const vp = pg.getViewport({ scale: (w / base.width) * dpr });
+    const off = document.createElement("canvas");
+    off.width = vp.width;
+    off.height = vp.height;
+    await pg.render({ canvasContext: off.getContext("2d"), viewport: vp }).promise;
+    if (!upSnap || !ok()) return;   // 그사이 시연이 멈췄으면 사용자의 화면을 건드리지 않는다
+    const cv = $("#thumb");
+    cv.width = off.width;
+    cv.height = off.height;
+    cv.style.width = w + "px";
+    cv.style.height = base.height * (w / base.width) + "px";
+    cv.getContext("2d").drawImage(off, 0, 0);
+  } catch {}
+}
+
+async function sceneUpload(ok) {
+  go("upload");
+  snapUpload();
+  await tell("가상의 공모전 발표 「동네 공유 우산」으로 큐잇의 여섯 단계를 차례로 보여드려요.", ok);
+  if (!ok()) return false;
+
+  // 발표 유형 고르기 (보여주기만 하고 사용자의 선택은 바꾸지 않는다)
+  $$("#typeList .tp").forEach((b) => b.classList.toggle("on", b.dataset.type === deck.type));
+  $("#typeInfo").innerHTML = typeInfoHtml(deck.type);
+  spot(".typecard");
+  await tell("1단계 준비예요. 먼저 발표 유형을 골라요. 여기서는 '공모전·투자 발표'를 골랐어요.", ok);
+  if (!ok()) return false;
+
+  // 자료 넣기
+  spot("#upload .grid2");
+  await tellWhile("슬라이드 PDF와 발표 대본을 넣어요. 대본이 없으면 비워 둬도 AI가 만들어 줘요.", ok, async () => {
+    await showDemoPdf(ok);
+    if (ok()) await typeInto($("#scriptBox"), DEMO_SCRIPT_TEXT, ok);
+  });
+  if (!ok()) return false;
+
+  // 분석
+  const btn = $("#analyzeBtn");
+  btn.classList.add("demo-live");
+  spot(btn);
+  const total = deck.slides.length;
+  await tellWhile("「AI 분석 시작」을 누르면 AI가 슬라이드를 한 장씩 읽어요. 실제로는 30초쯤 걸려서, 지금은 미리 분석해 둔 결과를 보여드려요.", ok, async () => {
+    for (let i = 1; i <= total; i++) {
+      if (!ok()) return;
+      $("#analyzeMsg").textContent = `AI가 슬라이드를 읽고 있어요 (${i}/${total})`;
+      await dwait(1300, ok);
+    }
+  });
+  const done = ok();
+  restoreUpload();
+  return done;
+}
+
+async function sceneReview(ok) {
+  go("review");
+  const n = deck.slides.reduce((a, s) => a + s.items.length, 0);
+  spot("#reviewList");
+  await tell(`2단계 검토예요. AI가 슬라이드 ${deck.slides.length}장을 읽고, 발표에서 꼭 말해야 할 핵심 ${n}개를 뽑았어요.`, ok);
+  if (!ok()) return false;
+  const g = $("#gapBox .gaps");
+  if (g) {
+    spot(g);
+    await tell("공모전 발표인데 심사위원이 기대하는 '차별점'이 자료에 없다는 것도 AI가 찾아냈어요.", ok);
+    if (!ok()) return false;
+  }
+  spot("#reviewList .itemrow");
+  await tell("AI가 틀릴 수 있어서, 발표자가 문구를 직접 고치거나 필요 없는 항목을 지울 수 있어요.", ok);
+  return ok();
+}
+
+async function scenePractice(ok) {
+  go("practice");
+  applyMood();
+  qaHistory = [];
+  $("#qaLog").innerHTML = "";
+  $("#answerBox").value = "";
+  lastQuestion = DEMO_QA.question;
+  addQ(lastQuestion);
+  spot("#qaLog");
+  await tell("3단계 연습이에요. AI가 심사위원이 되어 발표의 약한 곳을 물어요.", ok);
+  if (!ok()) return false;
+
+  spot("#practice .answer-wrap");
+  await tellWhile("발표자가 직접 답해요. AI는 답변을 대신 써 주지 않아요.", ok, () => typeInto($("#answerBox"), DEMO_QA.answer, ok));
+  if (!ok()) return false;
+
+  $("#answerBox").value = "";
+  addA(DEMO_QA.answer);
+  addC(DEMO_QA.comment);
+  qaHistory.push({ role: "발표자", text: DEMO_QA.answer });
+  lastQuestion = DEMO_QA.followUp;
+  qaHistory.push({ role: typeOf(deck.type).audience, text: lastQuestion });
+  addQ(lastQuestion);
+  spot("#qaLog");
+  await tell("AI가 답변에서 약한 곳을 짚고 꼬리질문을 이어 가요. 이 대화는 미리 받아 둔 예시예요.", ok);
+  return ok();
+}
+
+async function scenePresent(ok, base) {
+  go("present");
+  beginRun(true);
+  const alive = () => base() && running && curStep === "present";
   for (const st of DEMO_SCRIPT) {
-    if (!alive()) return;
-    if (st.cap) caption(st.cap);
+    if (!alive()) return false;
+    const ms = st.wait ?? (st.cap ? readMs(st.cap) : 1200);
+    if (st.cap) caption(st.cap, ms);
     if (st.say) await speak(st.say, alive);
-    if (!alive()) return;
+    if (!alive()) return false;
     if (st.act === "next") move(1);
     else if (st.act === "stuck") showStuck();
     else if (st.act === "close") {
@@ -189,10 +472,11 @@ async function playDemo() {
       startTs = Date.now() - (goalSec - st.left) * 1000;   // 시간을 앞당긴다
     } else if (st.act === "end") {
       endRun();
-      return;
+      return true;
     }
-    await sleep(st.wait ?? 1200);
+    await dwait(ms, alive);
   }
+  return true;
 }
 
 // 음성 인식 대신, 발표자가 말하는 문장을 낱말 단위로 흘려 넣는다
@@ -202,24 +486,107 @@ async function speak(text, alive) {
     if (!alive()) return;
     said += (said ? " " : "") + w;
     buffers[cur] = (buffers[cur] + " " + w).slice(-4000);
+    if (demoSkip) continue;
     $("#sttMsg").textContent = "🎙 " + said;
     paint();
-    await sleep(190);
+    await dwait(280, alive);
   }
+  $("#sttMsg").textContent = "🎙 " + said;
+  paint();
 }
 
-function caption(t) {
-  $("#demoCapText").textContent = t;
-  $("#demoCap").hidden = false;
+async function sceneReport(ok) {
+  if (curStep !== "report") go("report");
+  spot("#reportBody .tiles");
+  await tell("5단계 리포트예요. 걸린 시간, 놓친 핵심, 큐를 요청한 횟수가 기록으로 남아요.", ok);
+  if (!ok()) return false;
+  spot("#reportBody .coach");
+  await tell("AI 코칭은 발표 기록을 읽고 잘한 점과 다음 연습에서 고칠 점을 알려줘요.", ok);
+  return ok();
 }
-function hideCaption() {
-  $("#demoCap").hidden = true;
+
+async function sceneQna(ok) {
+  go("qna");
+  $("#qInput").value = "";
+  $("#qResult").innerHTML = "";
+  spot("#qna .card");
+  await tellWhile("6단계 질의응답이에요. 발표가 끝나고 받은 질문을 입력하거나 마이크로 받아 적어요.", ok, () => typeInto($("#qInput"), DEMO_ASK, ok));
+  if (!ok()) return false;
+  renderQna(DEMO_ASK);
+  spot("#qResult");
+  await tell("질문과 이어지는 슬라이드와 미리 준비한 핵심 단어를 찾아줘요. 답변은 발표자가 직접 해요.", ok);
+  return ok();
 }
-$("#demoStop").onclick = () => {
+
+const SCENES = [
+  { id: "upload", run: sceneUpload },
+  { id: "review", run: sceneReview },
+  { id: "practice", run: scenePractice },
+  { id: "present", run: scenePresent },
+  { id: "report", run: sceneReport },
+  { id: "qna", run: sceneQna },
+];
+
+async function autoDemo() {
+  stopDemo();
+  enterDemo();
+  const my = ++demoToken;
+  demoOn = true;
+  document.body.classList.add("demo-on");
+  setCapMode("play");
+  const base = () => my === demoToken && !!deck?.demo;
+
+  for (let i = 0; i < SCENES.length; i++) {
+    const sc = SCENES[i];
+    demoSkip = false;
+    $("#demoStep").textContent = `시연 ${i + 1}/${SCENES.length} · ${STEPS[i].label}`;
+    $("#demoNext").textContent = i < SCENES.length - 1 ? "다음 단계 ⏭" : "마치기 ⏭";
+    const done = await sc.run(() => base() && curStep === sc.id, base);
+    if (my !== demoToken) return;   // 그사이 멈췄거나 새 시연이 시작됐다
+    clearSpot();
+    if (!done) {
+      // 보는 사람이 직접 다른 화면으로 옮겼다. 시연을 접고 그 화면을 그대로 둔다.
+      stopDemo();
+      return;
+    }
+  }
+
+  // 끝 — 다음에 무엇을 할지 고르게 한다
+  demoOn = false;
+  demoSkip = false;
+  demoEnded = true;
+  $("#demoStep").textContent = "시연 끝";
+  setCapMode("end");
+  caption("시연이 끝났어요. 샘플로 직접 써 보거나, 내 자료로 바로 시작해 보세요.", 0);
+}
+
+// 시연을 접는다. 체험용 샘플 자료는 그대로 남아서 이어서 직접 써 볼 수 있다.
+function stopDemo() {
   demoToken++;
+  demoOn = false;
+  demoSkip = false;
+  demoEnded = false;
+  setPaused(false);
+  document.body.classList.remove("demo-on");
   hideCaption();
+  clearSpot();
+  restoreUpload();
+}
+
+$("#demoAuto").onclick = autoDemo;
+$("#demoTry").onclick = tryDemo;
+$("#demoPause").onclick = () => setPaused(!demoPaused);
+$("#demoNext").onclick = () => {
+  demoSkip = true;
+  setPaused(false);
+};
+$("#demoStop").onclick = () => {
+  stopDemo();
   if (running) endRun();
 };
+$("#demoEndTry").onclick = tryDemo;
+$("#demoEndMine").onclick = exitDemo;
+$("#demoEndAgain").onclick = autoDemo;
 
 /* ══ 1. 업로드 ══════════════════════════ */
 let pdfFile = null;
@@ -240,16 +607,21 @@ function renderTypes() {
 
   const info = $("#typeInfo");
   if (!ptype) {
-    info.textContent = "유형을 고르면 기본 시간, 꼭 전달할 내용, 질문하는 사람이 그 상황에 맞게 바뀝니다.";
+    info.textContent = "유형을 고르면 기본 시간, 꼭 전달할 내용, 질문하는 사람이 그 상황에 맞게 바뀌어요.";
   } else {
-    const t = typeOf(ptype);
-    info.innerHTML =
-      `질문하는 사람 <b>${esc(t.audience)}</b> · 목표 시간 <b>${t.minutes}분</b><br>` +
-      (t.must.length
-        ? `이 유형에서 꼭 전달할 내용 ${t.must.map((m) => `<em>${esc(m)}</em>`).join("")}`
-        : "정해진 틀이 없습니다. AI가 자료에서 핵심을 찾습니다.");
+    info.innerHTML = typeInfoHtml(ptype);
   }
   applyType();
+}
+
+function typeInfoHtml(k) {
+  const t = typeOf(k);
+  return (
+    `질문하는 사람 <b>${esc(t.audience)}</b> · 목표 시간 <b>${t.minutes}분</b><br>` +
+    (t.must.length
+      ? `이 유형에서 꼭 전달할 내용 ${t.must.map((m) => `<em>${esc(m)}</em>`).join("")}`
+      : "정해진 틀이 없어요. AI가 자료에서 핵심을 찾아요.")
+  );
 }
 
 function pickType(k) {
@@ -271,7 +643,7 @@ function applyType() {
 function updateAnalyzeBtn() {
   const hasPdf = slideTexts.length > 0;
   $("#analyzeBtn").disabled = !(hasPdf && ptype);
-  if (hasPdf && !ptype) $("#analyzeMsg").textContent = "위에서 발표 유형을 골라주십시오.";
+  if (hasPdf && !ptype) $("#analyzeMsg").textContent = "위에서 발표 유형을 골라 주세요.";
   else if ($("#analyzeMsg").textContent.startsWith("위에서")) $("#analyzeMsg").textContent = "";
 }
 
@@ -298,7 +670,7 @@ $("#pdfFile").onchange = (e) => {
 
 async function handlePdf(f) {
   if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
-    $("#pdfInfo").textContent = "PDF 파일만 넣을 수 있습니다. PowerPoint에서 PDF로 저장해 주십시오.";
+    $("#pdfInfo").textContent = "PDF 파일만 넣을 수 있어요. PowerPoint에서 PDF로 저장해 주세요.";
     return;
   }
   pdfFile = f;
@@ -320,11 +692,11 @@ async function handlePdf(f) {
     $("#dzIdle").hidden = true;
     $("#dzLoaded").hidden = false;
     dz.classList.add("loaded");
-    $("#pdfInfo").textContent = "슬라이드를 모두 읽었습니다. 대본을 넣고 분석을 시작하십시오.";
+    $("#pdfInfo").textContent = "슬라이드를 모두 읽었어요. 대본을 넣고 분석을 시작해 주세요.";
     updateAnalyzeBtn();
     await savePdf(f);
   } catch (err) {
-    $("#pdfInfo").textContent = "PDF를 읽지 못했습니다: " + err.message;
+    $("#pdfInfo").textContent = "PDF를 읽지 못했어요: " + err.message;
   }
 }
 
@@ -355,10 +727,10 @@ async function post(body) {
   try {
     d = JSON.parse(raw);
   } catch {
-    throw new Error("서버가 예상과 다른 응답을 보냈습니다. 배포 상태를 확인하십시오.");
+    throw new Error("서버가 예상과 다른 응답을 보냈어요. 배포 상태를 확인해 주세요.");
   }
   if (d.errorMessage || d.errorType) {
-    throw new Error("함수 실행 시간이 초과되었습니다. 잠시 후 다시 시도해 주십시오.");
+    throw new Error("처리 시간이 초과됐어요. 잠시 후 다시 시도해 주세요.");
   }
   if (d.error) throw new Error(d.error + (d.detail ? ` — ${d.detail.slice(0, 80)}` : ""));
   return d;
@@ -382,7 +754,7 @@ $("#analyzeBtn").onclick = async () => {
         script,
         type: ptype,
       });
-      if (!Array.isArray(s.items)) throw new Error("분석 결과 형식이 올바르지 않습니다.");
+      if (!Array.isArray(s.items)) throw new Error("분석 결과 형식이 올바르지 않아요.");
       slides.push(s);
     }
 
@@ -394,7 +766,7 @@ $("#analyzeBtn").onclick = async () => {
     try {
       q = await post({ mode: "questions", summary, type: ptype });
     } catch {
-      msg.textContent = "예상 질문 생성은 실패했지만 핵심 항목은 정상입니다.";
+      msg.textContent = "예상 질문은 만들지 못했지만 핵심 항목은 정상이에요.";
     }
 
     // 이 유형에 꼭 있어야 하는데 자료에서 찾지 못한 내용. 실패해도 나머지는 그대로 쓴다.
@@ -427,7 +799,7 @@ $("#analyzeBtn").onclick = async () => {
     renderReview();
     go("review");
   } catch (e) {
-    msg.textContent = "분석에 실패했습니다: " + e.message;
+    msg.textContent = "분석하지 못했어요: " + e.message;
   } finally {
     btn.textContent = "AI 분석 시작";
     updateAnalyzeBtn();
@@ -486,14 +858,14 @@ function renderGaps() {
     return;
   }
   if (!deck.gaps.length) {
-    box.innerHTML = `${tag}<div class="gaps ok"><h3>이 유형에서 꼭 전달할 내용이 자료에 모두 있습니다</h3>
+    box.innerHTML = `${tag}<div class="gaps ok"><h3>AI가 확인해 보니, 이 유형에서 꼭 전달할 내용이 자료에 모두 있어요</h3>
       <div class="gnote">${t.must.map(esc).join(" · ")}</div></div>`;
     return;
   }
   box.innerHTML = `${tag}<div class="gaps">
-    <h3>${esc(iga(t.audience))} 기대하는데 자료에서 찾지 못한 내용</h3>
+    <h3>${esc(iga(t.audience))} 기대하는데 AI가 자료에서 찾지 못한 내용</h3>
     <ul>${deck.gaps.map((g) => `<li><b>${esc(g.label)}</b>${g.tip ? " — " + esc(g.tip) : ""}</li>`).join("")}</ul>
-    <div class="gnote">AI가 자료를 읽고 판단한 참고 의견입니다. 이미 넣은 내용이라면 넘어가셔도 됩니다.</div>
+    <div class="gnote">AI가 자료를 읽고 판단한 참고 의견이에요. 이미 넣은 내용이라면 넘어가도 돼요.</div>
   </div>`;
 }
 
@@ -510,9 +882,9 @@ let lastQuestion = "";
 let cdTimer = null;
 
 const MOOD = {
-  일반: "편하게 답해보십시오. 이해를 확인하는 질문부터 시작합니다.",
-  검증: "근거와 방법을 검증하는 질문이 이어집니다.",
-  압박: "발표의 결론을 흔드는 질문이 들어옵니다. 30초 안에 답해보십시오.",
+  일반: "편하게 답해 보세요. 이해를 확인하는 질문부터 시작해요.",
+  검증: "근거와 방법을 검증하는 질문이 이어져요.",
+  압박: "발표의 결론을 흔드는 질문이 들어와요. 30초 안에 답해 보세요.",
 };
 
 function applyMood() {
@@ -652,6 +1024,7 @@ let recog = null;
 let tick = null;
 let rerouted = false;
 let skipped = [];      // 건너뛴 슬라이드 번호
+let checkedAt = new Map();   // 항목이 체크된 시각 (체크 표시가 톡 찍히는 움직임에 쓴다)
 
 $("#openSlides").onclick = () => {
   window.open(deck?.demo ? "slides.html?demo=1" : "slides.html", "cueitSlides", "width=1280,height=760");
@@ -662,7 +1035,7 @@ $("#startRun").onclick = () => beginRun(false);
 // simulated: 체험 자동 시연. 마이크 대신 대본이 말한다.
 function beginRun(simulated) {
   if (!deck) {
-    $("#micMsg").textContent = "먼저 1단계에서 자료를 분석하십시오.";
+    $("#micMsg").textContent = "먼저 1단계에서 자료를 분석해 주세요.";
     return;
   }
   goalSec = Math.max(60, Number($("#goalMin").value || 7) * 60);
@@ -674,6 +1047,7 @@ function beginRun(simulated) {
   stuckEcho = null;
   $("#skipBtn").hidden = true;
   spoken = new Set();
+  checkedAt = new Map();
   buffers = deck.slides.map(() => "");
   slideSpent = deck.slides.map(() => 0);
   slideEnter = deck.slides.map(() => 0);
@@ -737,17 +1111,22 @@ let previewDoc = null;
 let previewKey = "";      // 어떤 자료를 불러왔는지: "demo" 또는 "user"
 let previewJob = 0;
 
+async function ensurePreviewDoc() {
+  const key = deck?.demo ? "demo" : "user";
+  if (previewKey !== key || !previewDoc) {
+    const blob = key === "demo" ? await (await fetch(DEMO_PDF)).blob() : await loadPdf();
+    if (!blob) throw new Error("no pdf");
+    previewDoc = await pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
+    previewKey = key;
+  }
+  return previewDoc;
+}
+
 async function drawPreview(page) {
   const cv = $("#slidePrev");
-  const key = deck?.demo ? "demo" : "user";
   const job = ++previewJob;
   try {
-    if (previewKey !== key) {
-      const blob = key === "demo" ? await (await fetch(DEMO_PDF)).blob() : await loadPdf();
-      if (!blob) throw new Error("no pdf");
-      previewDoc = await pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
-      previewKey = key;
-    }
+    await ensurePreviewDoc();
     if (job !== previewJob) return;
     const pg = await previewDoc.getPage(Math.min(page, previewDoc.numPages));
     const base = pg.getViewport({ scale: 1 });
@@ -772,7 +1151,7 @@ async function drawPreview(page) {
 function startClock() {
   clearInterval(tick);
   tick = setInterval(() => {
-    if (!running) return;
+    if (!running || demoPaused) return;
     const el = Math.floor((Date.now() - startTs) / 1000);
     const left = goalSec - el;
     $("#clock").textContent = `${fmt(el)} / ${fmt(goalSec)}`;
@@ -846,7 +1225,7 @@ $("#skipBtn").onclick = () => {
   sendSlide();
   paint();
   updateSkipBtn();
-  showAlert(`건너뜀 — ${deck.slides[cur].title}(으)로 이동했습니다`, "", [], 3000);
+  showAlert(`건너뜀 — ${deck.slides[cur].title}(으)로 이동했어요`, "", [], 3000);
 };
 
 /* 슬라이드 이동 */
@@ -860,10 +1239,10 @@ function move(d) {
     const { missedRequired } = evaluateSlide(buffers[cur], deck.slides[cur], spoken);
     if (missedRequired.length) {
       showAlert(
-        "아직 전달하지 않은 내용이 있습니다 — " + missedRequired.map((m) => m.label).join(", "),
+        "아직 말하지 않은 내용이 있어요 — " + missedRequired.map((m) => m.label).join(", "),
         "돌아가지 말고 한 문장으로 보완하세요",
         [],
-        4500
+        demoOn ? 9000 : 4500
       );
     }
   }
@@ -909,7 +1288,12 @@ function paint() {
   sl.items.forEach((it) => {
     const li = document.createElement("li");
     const done = spoken.has(it.id);
-    li.className = (done ? "done " : "") + (it.level === "선택" ? "opt-item" : "");
+    // 방금 처음 체크된 항목만 한 번 톡 찍힌다. 화면을 다시 그려도 처음부터 되풀이하지 않는다.
+    if (done && !checkedAt.has(it.id)) checkedAt.set(it.id, Date.now());
+    const age = done ? Date.now() - checkedAt.get(it.id) : 0;
+    const fresh = done && age < 1100;
+    li.className = (done ? "done " : "") + (fresh ? "just " : "") + (it.level === "선택" ? "opt-item" : "");
+    if (fresh) li.style.setProperty("--age", `-${age}ms`);
     li.innerHTML = `<span class="b">${done ? "✓" : "●"}</span><span>${esc(it.label)}</span>`;
     ul.appendChild(li);
   });
@@ -927,7 +1311,7 @@ function paint() {
     ? remain[0].label
     : cur + 1 < deck.slides.length
     ? `다음: ${deck.slides[cur + 1].title}`
-    : "모두 전달했습니다";
+    : "모두 전달했어요";
 }
 
 /* 큐 주세요 — 말이 막혔을 때 다음 문장을 보여준다 */
@@ -965,7 +1349,7 @@ function showAlert(title, sub, list, ms) {
 function startSTT() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
-    $("#sttMsg").textContent = "이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용하십시오.";
+    $("#sttMsg").textContent = "이 브라우저는 음성 인식을 지원하지 않아요. Chrome에서 열어 주세요.";
     return;
   }
   recog = new SR();
@@ -984,7 +1368,7 @@ function startSTT() {
   };
   recog.onerror = (e) => {
     $("#micDot").hidden = true;
-    if (e.error === "not-allowed") $("#sttMsg").textContent = "마이크 권한이 거부되었습니다.";
+    if (e.error === "not-allowed") $("#sttMsg").textContent = "마이크 권한이 꺼져 있어요. 주소창 왼쪽 자물쇠에서 마이크를 허용해 주세요.";
   };
   recog.onend = () => {
     $("#micDot").hidden = true;
@@ -1014,7 +1398,7 @@ function endRun() {
   $("#preRun").style.display = "block";
   $("#alertBox").innerHTML = "";
   $("#skipBtn").hidden = true;
-  hideCaption();
+  if (!demoOn) hideCaption();
 
   const total = Math.floor((Date.now() - startTs) / 1000);
   const missed = [];
@@ -1034,18 +1418,80 @@ function endRun() {
   };
   if (deck.demo) renderDemoReport(rep);
   else {
+    lastRun = { at: rep.at, type: typeKey(deck.type), record: buildRecord(rep) };
     saveReport(rep);
     renderReports();
   }
   go("report");
 }
 
+/* ══ 발표 후 AI 코칭 ════════════════════
+   발표 기록(전달한 핵심·놓친 핵심·시간·받아 적은 말)을 AI가 읽고 다음 연습을 위한 조언을 준다.
+   기록이 AI로 전송되므로 자동으로 보내지 않고, 사용자가 버튼을 눌렀을 때만 보낸다. */
+let lastRun = null;   // 방금 끝난 발표의 기록. 새로고침하면 사라진다.
+
+function buildRecord(rep) {
+  const L = [];
+  L.push(`목표 시간 ${fmt(rep.goal)}, 실제 시간 ${fmt(rep.total)}`);
+  L.push(`말이 막혀 도움(큐)을 요청한 횟수 ${rep.stuckCount}회`);
+  L.push(`건너뛴 슬라이드: ${rep.skipped.length ? rep.skipped.join(", ") : "없음"}`);
+  deck.slides.forEach((sl, i) => {
+    const expect = sl.items.reduce((a, it) => a + (Number(it.seconds) || 0), 0);
+    L.push(
+      `\n슬라이드 ${sl.n} 「${sl.title}」 — 핵심을 말하는 데 예상 ${expect}초, 실제 머문 시간 ${slideSpent[i] || 0}초` +
+        (rep.skipped.includes(sl.n) ? " (건너뜀)" : "")
+    );
+    sl.items.forEach((it) => L.push(` - [${spoken.has(it.id) ? "전달" : "놓침"}] ${it.label} (${it.level})`));
+    const said = (buffers[i] || "").replace(/\s+/g, " ").trim().slice(-400);
+    if (said) L.push(` 받아 적은 말: ${said}`);
+  });
+  return L.join("\n");
+}
+
+function coachHtml(c, note) {
+  if (!c) return "";
+  return `<div class="coach">
+    <div class="coach-h">AI 코칭${note ? `<span>${esc(note)}</span>` : ""}</div>
+    ${c.summary ? `<p class="coach-sum">${esc(c.summary)}</p>` : ""}
+    <div class="coach-cols">
+      <div><h4>잘한 점</h4>${
+        c.good?.length ? `<ul>${c.good.map((g) => `<li>${esc(g)}</li>`).join("")}</ul>` : `<p class="dim">기록에서 찾지 못했어요.</p>`
+      }</div>
+      <div><h4>다음에 고칠 점</h4>${
+        c.fix?.length
+          ? `<ul>${c.fix.map((f) => `<li><b>${esc(f.point)}</b>${f.how ? `<br>${esc(f.how)}` : ""}</li>`).join("")}</ul>`
+          : `<p class="dim">크게 고칠 점이 없어요.</p>`
+      }</div>
+    </div>
+    ${c.next ? `<div class="coach-next"><b>다음 연습에서 해볼 한 가지</b>${esc(c.next)}</div>` : ""}
+    <div class="coach-note">AI가 발표 기록을 읽고 만든 참고 의견이에요. 점수를 매기거나 발표 문장을 대신 써 주지 않아요.</div>
+  </div>`;
+}
+
+async function askCoach(btn) {
+  if (!lastRun) return;
+  const msg = $("#coachMsg");
+  btn.disabled = true;
+  btn.textContent = "AI가 발표 기록을 읽는 중";
+  msg.textContent = "";
+  try {
+    const d = await post({ mode: "coach", type: lastRun.type, record: lastRun.record });
+    updateLatestReport({ coach: d.coach });
+    renderReports();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "AI 코칭 받기";
+    msg.textContent = "코칭을 받지 못했어요: " + e.message;
+  }
+}
+
 // 체험 결과는 저장하지 않고 이번 한 번만 보여준다
 function renderDemoReport(rep) {
   $("#reportBody").innerHTML =
-    `<div class="compare">체험 결과입니다. 저장되지 않으며, 시연을 위해 발표 시간을 앞당겼습니다.
-       직접 발표하면 회차마다 기록이 쌓여 첫 연습과 비교할 수 있습니다.</div>` +
+    `<div class="compare">체험 결과예요. 저장되지 않으며, 시연을 위해 발표 시간을 앞당겼어요.
+       직접 발표하면 회차마다 기록이 쌓여 첫 연습과 비교할 수 있어요.</div>` +
     reportCard(rep, 0, 1) +
+    coachHtml(DEMO_COACH, "샘플 발표로 미리 받아 둔 결과") +
     `<div class="row"><button class="primary" id="demoDone">체험 끝내고 내 자료로 시작하기</button>
        <button class="ghost" id="demoAgain">시연 다시 보기</button></div>`;
   $("#demoDone").onclick = exitDemo;
@@ -1056,7 +1502,7 @@ function renderReports() {
   const all = loadReports();
   const box = $("#reportBody");
   if (!all.length) {
-    box.innerHTML = `<p class="lead">아직 리포트가 없습니다. 발표를 한 번 진행하면 생성됩니다.</p>`;
+    box.innerHTML = `<p class="lead">아직 리포트가 없어요. 발표를 한 번 하면 만들어져요.</p>`;
     return;
   }
 
@@ -1068,16 +1514,33 @@ function renderReports() {
     const dm = first.missed.length - now.missed.length;
     const ds = first.stuckCount - now.stuckCount;
     const parts = [];
-    if (dm > 0) parts.push(`놓친 핵심이 <b>${dm}개 줄었습니다</b>`);
-    else if (dm < 0) parts.push(`놓친 핵심이 ${-dm}개 늘었습니다`);
-    if (ds > 0) parts.push(`큐를 요청한 횟수가 <b>${ds}회 줄었습니다</b>`);
-    html += `<div class="compare">첫 연습(${all.length}회 전)과 비교해 ${
-      parts.length ? parts.join(", ") : "큰 변화가 없습니다"
+    if (dm > 0) parts.push(`놓친 핵심이 <b>${dm}개 줄었어요</b>`);
+    else if (dm < 0) parts.push(`놓친 핵심이 ${-dm}개 늘었어요`);
+    if (ds > 0) parts.push(`큐를 요청한 횟수가 <b>${ds}회 줄었어요</b>`);
+    html += `<div class="compare">첫 연습(${all.length - 1}회 전)과 비교해 ${
+      parts.length ? parts.join(", ") : "큰 변화가 없어요"
     }.</div>`;
   }
 
-  html += all.map((r, i) => reportCard(r, i, all.length)).join("");
+  html += all
+    .map((r, i) => {
+      let extra = "";
+      if (r.coach) extra = coachHtml(r.coach, "");
+      else if (i === 0 && lastRun && lastRun.at === r.at) {
+        extra = `<div class="coach ask">
+          <div class="coach-h">AI 코칭</div>
+          <p class="coach-sum">AI가 이번 발표 기록을 읽고, 잘한 점과 다음 연습에서 고칠 점을 알려줘요.</p>
+          <button class="primary" id="coachBtn">AI 코칭 받기</button>
+          <div class="coach-note">누르면 전달한 핵심, 놓친 핵심, 시간, 받아 적은 말이 AI(Claude)로 전송돼요. 누르기 전에는 전송되지 않아요.</div>
+          <div id="coachMsg" class="msg"></div>
+        </div>`;
+      }
+      return reportCard(r, i, all.length) + extra;
+    })
+    .join("");
   box.innerHTML = html;
+  const cb = $("#coachBtn");
+  if (cb) cb.onclick = () => askCoach(cb);
 }
 
 function reportCard(r, i, total) {
@@ -1114,7 +1577,7 @@ function reportCard(r, i, total) {
       <div class="tile ${r.missed.length ? "warn" : "good"}">
         <div class="tl">놓친 필수 핵심</div>
         <div class="tv">${r.missed.length}<span style="font-size:1rem">건</span></div>
-        <div class="ts">${r.missed.length ? "아래 목록 확인" : "모두 전달했습니다"}</div>
+        <div class="ts">${r.missed.length ? "아래 목록 확인" : "모두 전달했어요"}</div>
       </div>
       <div class="tile ${r.stuckCount ? "warn" : "good"}">
         <div class="tl">큐 요청</div>
@@ -1128,7 +1591,7 @@ function reportCard(r, i, total) {
       ${
         r.missed.length
           ? `<ul class="misslist">${r.missed.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>`
-          : `<div class="okline">없습니다. 필수 항목을 모두 전달했습니다.</div>`
+          : `<div class="okline">없어요. 필수 항목을 모두 전달했어요.</div>`
       }
     </div>
 
@@ -1184,12 +1647,12 @@ function findRelated(question) {
 function renderQna(question) {
   const box = $("#qResult");
   if (!deck) {
-    box.innerHTML = `<div class="empty">먼저 1단계에서 발표 자료를 분석하십시오.</div>`;
+    box.innerHTML = `<div class="empty">먼저 1단계에서 발표 자료를 분석해 주세요.</div>`;
     return;
   }
   const hits = findRelated(question);
   if (!hits.length) {
-    box.innerHTML = `<div class="empty">관련 슬라이드를 찾지 못했습니다. 질문의 핵심 단어를 넣어 다시 시도하십시오.</div>`;
+    box.innerHTML = `<div class="empty">관련 슬라이드를 찾지 못했어요. 질문의 핵심 단어를 넣어 다시 찾아 주세요.</div>`;
     return;
   }
   box.innerHTML = hits
@@ -1217,7 +1680,7 @@ function renderQna(question) {
     b.onclick = () => {
       ensureChannel();
       channel.postMessage({ type: "goto", page: Number(b.dataset.n) });
-      b.textContent = "띄웠습니다";
+      b.textContent = "띄웠어요";
       setTimeout(() => (b.textContent = "이 슬라이드 띄우기"), 1500);
     };
   });
@@ -1231,21 +1694,21 @@ $("#qInput").addEventListener("keydown", (e) => {
 $("#qMic").onclick = () => {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
-    $("#qMicMsg").textContent = "이 브라우저는 음성 인식을 지원하지 않습니다.";
+    $("#qMicMsg").textContent = "이 브라우저는 음성 인식을 지원하지 않아요.";
     return;
   }
   const rec = new SR();
   rec.lang = "ko-KR";
   rec.continuous = false;
   rec.interimResults = false;
-  $("#qMicMsg").textContent = "듣고 있습니다. 질문을 말씀하십시오.";
+  $("#qMicMsg").textContent = "듣고 있어요. 질문을 말해 주세요.";
   rec.onresult = (e) => {
     const t = e.results[0][0].transcript;
     $("#qInput").value = t;
     $("#qMicMsg").textContent = "";
     renderQna(t);
   };
-  rec.onerror = () => ($("#qMicMsg").textContent = "인식하지 못했습니다. 다시 시도하십시오.");
+  rec.onerror = () => ($("#qMicMsg").textContent = "알아듣지 못했어요. 다시 말해 주세요.");
   rec.onend = () => {
     if ($("#qMicMsg").textContent.startsWith("듣고")) $("#qMicMsg").textContent = "";
   };
@@ -1288,11 +1751,11 @@ function checkBrowser() {
     level = levelKey(level);
     renderReview();
     renderPractice();
-    $("#analyzeMsg").textContent = "이전에 분석한 자료가 있습니다. 2단계부터 이어서 진행할 수 있습니다.";
+    $("#analyzeMsg").textContent = "이전에 분석한 자료가 있어요. 2단계부터 이어서 할 수 있어요.";
   }
   renderReports();
   const blob = await loadPdf().catch(() => null);
-  if (blob) $("#pdfInfo").textContent = "저장된 PDF가 있습니다. 새 파일을 넣으면 교체됩니다.";
+  if (blob) $("#pdfInfo").textContent = "저장된 PDF가 있어요. 새 파일을 넣으면 바뀌어요.";
 
   // 주소 끝에 ?demo=auto 를 붙이면 자동 시연이, ?demo=try 를 붙이면 샘플 자료가 바로 열린다.
   // 공모전에 제출하는 링크 하나로 심사위원이 곧바로 시연을 볼 수 있게 한다.

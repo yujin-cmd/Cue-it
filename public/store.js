@@ -67,3 +67,11 @@ export function saveType(key) {
 export function loadType() {
   return localStorage.getItem("cueit-type") || "";
 }
+
+// 가장 최근 리포트에 내용을 덧붙인다(AI 코칭 결과 등)
+export function updateLatestReport(patch) {
+  const all = loadReports();
+  if (!all.length) return;
+  all[0] = { ...all[0], ...patch };
+  localStorage.setItem("cueit-reports", JSON.stringify(all.slice(0, 10)));
+}
