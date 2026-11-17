@@ -133,7 +133,7 @@ function persist() {
 
 /* ══ 체험하기 ═══════════════════════════
    미리 분석해 둔 가상의 발표로 큐잇을 바로 써 본다. AI를 부르지 않는다.
-   · 자동 시연: 준비 → 검토 → 연습 → 발표 → 리포트 → 질의응답 여섯 단계를 차례로 보여준다(약 2분).
+   · 자동 시연: 준비 → 검토 → 연습 → 발표 → 리포트 → 질의응답 여섯 단계를 차례로 보여준다(약 2분 40초).
      보는 사람이 잠깐 멈추거나 다음 단계로 넘길 수 있다.
    · 직접 해보기: 샘플 자료로 검토·연습·발표를 직접 해 본다 */
 let userDeck = null;   // 체험을 시작하기 전의 내 자료. 체험이 끝나면 되돌린다.
@@ -189,7 +189,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // 안내 문구를 읽는 데 필요한 시간. 글자 수에 맞춘다.
 function readMs(t) {
-  return Math.min(6500, Math.max(3200, 1200 + t.length * 65));
+  return Math.min(8500, Math.max(4200, 1600 + t.length * 78));
 }
 
 // ms만큼 기다린다. 멈춤 중에는 시간이 흐르지 않고, 건너뛰기를 누르면 바로 끝난다.
@@ -205,17 +205,13 @@ async function dwait(ms, ok) {
   }
 }
 
-function caption(t, ms) {
+function caption(t) {
   const cap = $("#demoCap");
   $("#demoCapText").textContent = t;
   cap.hidden = false;
   cap.classList.remove("pop");
   void cap.offsetWidth;            // 문구가 바뀔 때마다 눈에 띄게 한 번 튀게 한다
   cap.classList.add("pop");
-  const bar = $("#demoBar");       // 다음 장면까지 남은 시간
-  bar.style.animation = "none";
-  void bar.offsetWidth;
-  bar.style.animation = ms ? `capbar ${ms}ms linear forwards` : "none";
 }
 function hideCaption() {
   $("#demoCap").hidden = true;
@@ -223,17 +219,16 @@ function hideCaption() {
 
 // 안내 문구를 띄우고 읽을 시간만큼 기다린다
 async function tell(t, ok, ms) {
-  ms = ms ?? readMs(t);
-  caption(t, ms);
-  await dwait(ms, ok);
+  caption(t);
+  await dwait(ms ?? readMs(t), ok);
 }
 // 안내 문구를 띄운 채로 화면 동작(fn)을 보여준다
 async function tellWhile(t, ok, fn) {
   const ms = readMs(t);
-  caption(t, ms);
+  caption(t);
   const t0 = performance.now();
   await fn();
-  await dwait(Math.max(900, ms - (performance.now() - t0)), ok);
+  await dwait(Math.max(1800, ms - (performance.now() - t0)), ok);
 }
 
 // 지금 설명하는 곳을 테두리로 짚어 준다
@@ -450,6 +445,9 @@ async function scenePractice(ok) {
   addQ(lastQuestion);
   spot("#qaLog");
   await tell("AI가 답변에서 약한 곳을 짚고 꼬리질문을 이어 가요. 이 대화는 미리 받아 둔 예시예요.", ok);
+  if (!ok()) return false;
+  spot("#practice .levels");
+  await tell("질문의 세기도 고를 수 있어요. '압박'을 고르면 30초 안에 답하는 연습을 해요.", ok);
   return ok();
 }
 
@@ -460,7 +458,7 @@ async function scenePresent(ok, base) {
   for (const st of DEMO_SCRIPT) {
     if (!alive()) return false;
     const ms = st.wait ?? (st.cap ? readMs(st.cap) : 1200);
-    if (st.cap) caption(st.cap, ms);
+    if (st.cap) caption(st.cap);
     if (st.say) await speak(st.say, alive);
     if (!alive()) return false;
     if (st.act === "next") move(1);
@@ -489,7 +487,7 @@ async function speak(text, alive) {
     if (demoSkip) continue;
     $("#sttMsg").textContent = "🎙 " + said;
     paint();
-    await dwait(280, alive);
+    await dwait(320, alive);
   }
   $("#sttMsg").textContent = "🎙 " + said;
   paint();
@@ -499,6 +497,9 @@ async function sceneReport(ok) {
   if (curStep !== "report") go("report");
   spot("#reportBody .tiles");
   await tell("5단계 리포트예요. 걸린 시간, 놓친 핵심, 큐를 요청한 횟수가 기록으로 남아요.", ok);
+  if (!ok()) return false;
+  spot("#reportBody .rep .sec");
+  await tell("어떤 핵심을 놓쳤는지, 슬라이드마다 시간을 얼마나 썼는지도 보여줘요.", ok);
   if (!ok()) return false;
   spot("#reportBody .coach");
   await tell("AI 코칭은 발표 기록을 읽고 잘한 점과 다음 연습에서 고칠 점을 알려줘요.", ok);
@@ -515,6 +516,9 @@ async function sceneQna(ok) {
   renderQna(DEMO_ASK);
   spot("#qResult");
   await tell("질문과 이어지는 슬라이드와 미리 준비한 핵심 단어를 찾아줘요. 답변은 발표자가 직접 해요.", ok);
+  if (!ok()) return false;
+  spot("#qResult .goto");
+  await tell("「이 슬라이드 띄우기」를 누르면 청중이 보는 슬라이드 창이 그 장으로 바로 넘어가요.", ok);
   return ok();
 }
 
@@ -1741,6 +1745,46 @@ function checkBrowser() {
   $("#browserWarn").hidden = ok;
 }
 
+/* 첫 화면 로고 인트로.
+   CSS만으로 2.6초 뒤에 걷히고, 화면을 누르거나 키를 누르면 바로 넘어간다.
+   introDone은 인트로가 완전히 사라졌을 때 끝난다(주소로 시작하는 자동 시연이 이것을 기다린다). */
+const introDone = new Promise((resolve) => {
+  const el = $("#intro");
+  const cs = el ? getComputedStyle(el) : null;
+  if (!el || cs.display === "none" || cs.visibility === "hidden") {
+    el?.remove();
+    resolve();
+    return;
+  }
+  let finished = false;
+  let revealed = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    el.remove();
+    resolve();
+  };
+  // 인트로가 걷히기 시작할 때 첫 화면의 내용이 아래에서 올라오게 한다
+  const reveal = () => {
+    if (revealed) return;
+    revealed = true;
+    if (curStep === "upload" && !demoOn) enterMotion("upload");
+  };
+  const skip = () => {
+    if (finished) return;
+    reveal();
+    el.classList.add("out");
+    setTimeout(finish, 400);
+  };
+  el.addEventListener("animationend", (e) => {
+    if (e.target === el) finish();
+  });
+  el.addEventListener("click", skip);
+  document.addEventListener("keydown", skip, { once: true });
+  setTimeout(reveal, 2600);
+  setTimeout(finish, 3800);   // 움직임이 막힌 환경에서도 반드시 걷힌다
+});
+
 (async function init() {
   checkBrowser();
   renderStepper();
@@ -1760,6 +1804,6 @@ function checkBrowser() {
   // 주소 끝에 ?demo=auto 를 붙이면 자동 시연이, ?demo=try 를 붙이면 샘플 자료가 바로 열린다.
   // 공모전에 제출하는 링크 하나로 심사위원이 곧바로 시연을 볼 수 있게 한다.
   const mode = new URLSearchParams(location.search).get("demo");
-  if (mode === "auto") autoDemo();
-  else if (mode === "try") tryDemo();
+  if (mode === "auto") introDone.then(autoDemo);
+  else if (mode === "try") introDone.then(tryDemo);
 })();

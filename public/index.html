@@ -4,13 +4,37 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>큐잇 Cue-it — 발표 중 놓친 말을 알려주는 AI 큐카드</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'%3E%3Ccircle cx='29' cy='29' r='19' stroke='%230A8563' stroke-width='8'/%3E%3Cpath d='M42 42L54 54' stroke='%23F5A623' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
+<!-- 첫 화면 로고 인트로. 큐(Q) 모양의 고리가 그려지고 꼬리에서 큐 신호가 퍼진다.
+     스크립트가 없어도 CSS만으로 사라지고, 누르면 바로 넘어간다. -->
+<div id="intro" class="intro" aria-hidden="true">
+  <div class="intro-in">
+    <svg class="intro-mark" viewBox="0 0 64 64" width="96" height="96" fill="none">
+      <circle class="im-pulse" cx="29" cy="29" r="19"/>
+      <circle class="im-pulse p2" cx="29" cy="29" r="19"/>
+      <circle class="im-ring" cx="29" cy="29" r="19" pathLength="100" transform="rotate(-90 29 29)"/>
+      <path class="im-tail" d="M42 42L54 54" pathLength="100"/>
+    </svg>
+    <div class="intro-text">
+      <div class="intro-word"><span><i>큐잇</i></span> <span><i class="en">Cue-it</i></span></div>
+      <div class="intro-tag">발표 중 놓친 말을 알려주는 AI 큐카드</div>
+    </div>
+  </div>
+</div>
+
 <header class="bar">
   <div class="bar-top">
-    <div class="brand">큐잇 <em>Cue-it</em></div>
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <circle cx="29" cy="29" r="19" stroke="currentColor" stroke-width="8"/>
+        <path d="M42 42L54 54" stroke="#F5A623" stroke-width="8" stroke-linecap="round"/>
+      </svg>
+      <span>큐잇 <em>Cue-it</em></span>
+    </div>
     <div class="saved" id="savedState">
       <span class="sv-dot"></span>
       <span id="savedText">아직 자료가 없어요</span>
@@ -33,11 +57,11 @@
   <div class="demo-card">
     <div class="dc-body">
       <b>자료 없이 먼저 볼 수 있어요</b>
-      <span>가상의 공모전 발표 「동네 공유 우산」으로, 준비부터 질의응답까지 여섯 단계를 약 2분 동안 차례로 보여드려요.
+      <span>가상의 공모전 발표 「동네 공유 우산」으로, 준비부터 질의응답까지 여섯 단계를 약 3분 동안 차례로 보여드려요.
         중간에 멈추거나 다음 단계로 넘길 수 있고, 마이크나 파일이 없어도 돼요.</span>
     </div>
     <div class="dc-btns">
-      <button id="demoAuto" class="primary">▶ 2분 자동 시연</button>
+      <button id="demoAuto" class="primary">▶ 3분 자동 시연</button>
       <button id="demoTry" class="ghost">샘플로 직접 해보기</button>
     </div>
   </div>
@@ -227,7 +251,6 @@
     <button id="demoEndMine" type="button" class="strong">내 자료로 시작하기</button>
     <button id="demoEndAgain" type="button">시연 다시 보기</button>
   </div>
-  <div class="dcap-bar"><i id="demoBar"></i></div>
 </div>
 
 <!-- 큐 주세요 오버레이 -->
