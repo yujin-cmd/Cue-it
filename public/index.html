@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>큐잇 Cue-it — 발표 중 놓친 말을 알려주는 AI 큐카드</title>
+<title>큐잇 Cue-it — 발표 중 막히면 다음 할 말을 알려주는 AI 큐카드</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'%3E%3Ccircle cx='29' cy='29' r='19' stroke='%230A8563' stroke-width='8'/%3E%3Cpath d='M42 42L54 54' stroke='%23F5A623' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -21,7 +21,7 @@
     </svg>
     <div class="intro-text">
       <div class="intro-word"><span><i>큐잇</i></span> <span><i class="en">Cue-it</i></span></div>
-      <div class="intro-tag">발표 중 놓친 말을 알려주는 AI 큐카드</div>
+      <div class="intro-tag">발표 중 막히면 다음 할 말을 알려주는 AI 큐카드</div>
     </div>
   </div>
 </div>
@@ -45,13 +45,13 @@
 
 <!-- ── 1. 준비 ───────────────────────────── -->
 <section id="upload" class="screen active">
-  <h1>발표 중 놓친 말을 알려드려요</h1>
+  <h1>발표 중 막히면 다음 할 말을 알려드려요</h1>
   <p class="lead">큐잇은 방송 현장의 FD처럼 <b>발표자에게만 보이는 신호(큐)</b>를 주는 AI 큐카드예요.
-     슬라이드와 대본을 넣어 두면 AI가 꼭 말해야 할 핵심을 뽑고, 발표 중에는 아직 말하지 않은 것만 알려줘요.</p>
+     발표자의 말을 실시간으로 따라가다가, 말이 막혀 <b>「큐 주세요」</b>를 누르면 이어서 할 말을 바로 보여줘요. 빠뜨린 핵심과 남은 시간도 함께 챙겨요.</p>
   <ol class="how">
     <li><b>1</b>발표 유형을 고르고 자료를 넣어요</li>
     <li><b>2</b>AI가 뽑은 핵심을 확인해요</li>
-    <li><b>3</b>발표하면서 큐를 받아요</li>
+    <li><b>3</b>막히면 「큐 주세요」를 눌러요</li>
   </ol>
 
   <div class="demo-card">
@@ -164,7 +164,7 @@
         <li>청중에게 보여 줄 때는 슬라이드 창을 열어 프로젝터 화면으로 옮기고 전체화면(F11)으로 두세요. 혼자 연습할 때는 열지 않아도 돼요.</li>
         <li>이 창은 노트북 화면에 두세요. 발표자만 봐요.</li>
         <li>방향키 또는 프레젠터 리모컨으로 슬라이드를 넘겨요.</li>
-        <li><b>B</b> 또는 <b>마침표</b> 키는 「큐 주세요」예요. 말이 막혔을 때 다음 문장을 보여줘요.</li>
+        <li><b>B</b> 또는 <b>마침표</b> 키는 「큐 주세요」예요. 말이 막혔을 때 누르면, 지금까지 한 말을 따라가서 바로 다음 문장을 보여줘요.</li>
       </ul>
       <div class="row">
         <button id="openSlides" class="ghost">슬라이드 창 열기</button>
@@ -219,8 +219,8 @@
 <!-- ── 6. 질의응답 ───────────────────────── -->
 <section id="qna" class="screen">
   <h1>질의응답 지원</h1>
-  <p class="lead">질문을 받으면 <b>본인이 미리 준비한 근거와 키워드</b>가 있는 슬라이드를 찾아줘요.
-     답변은 만들어 주지 않아요.</p>
+  <p class="lead">질문을 받으면 같은 낱말이 있는 슬라이드를 바로 보여 주고, <b>AI가 질문의 뜻을 읽어</b> 관련 슬라이드를 한 번 더 찾아줘요.
+     말이 달라도 찾을 수 있어요. 답변은 만들어 주지 않아요.</p>
 
   <div class="card hide-when-blank">
     <label class="lbl">받은 질문</label>
@@ -230,6 +230,7 @@
       <button id="qFind" class="primary">찾기</button>
     </div>
     <div id="qMicMsg" class="hint"></div>
+    <div class="hint">「찾기」를 누르면 질문과 슬라이드 요약(제목·핵심·대본 문장)이 AI(Claude)로 전송돼요.</div>
   </div>
 
   <div id="qResult" class="qresult"></div>

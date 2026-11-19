@@ -5,6 +5,7 @@ import { typeOf, LEVEL_GUIDE } from "../../public/presets.js";
 // mode: "questions" → 취약 논리와 난이도별 예상 질문
 // mode: "gaps"      → 발표 유형에 꼭 있어야 하는데 자료에서 찾지 못한 내용
 // mode: "coach"     → 발표가 끝난 뒤, 발표 기록을 읽고 다음 연습을 위한 코칭
+// mode: "find"      → 질의응답. 받은 질문과 뜻이 가까운 슬라이드를 고른다 (답변은 쓰지 않는다)
 //
 // type: 발표 유형(면접 발표, 업무 보고 등). public/presets.js 의 정의를 그대로 쓴다.
 // 유형 이름을 화면에서 받은 글자 그대로 프롬프트에 넣지 않고, 서버에 있는 정의에서 꺼내 쓴다.
@@ -59,7 +60,8 @@ ${typeBrief(t)}
    - 동의 표현: "온라인 설문", "인터넷 설문"
    못 잡는 것보다 틀리게 잡는 것이 훨씬 나쁘므로 변형을 넉넉히 넣습니다.
 5. keywords는 핵심 단어 2개.
-6. lines는 이 슬라이드에서 말할 대본 문장 3개 이내. 원문을 그대로 옮깁니다.
+6. lines는 이 슬라이드에서 말할 대본 문장 6개 이내. 원문을 말하는 순서 그대로 옮깁니다.
+   발표자가 말이 막혔을 때 이어서 말할 문장으로 보여주므로, 한 문장씩 나누어 넣습니다.
    대본이 없으면 슬라이드 텍스트로 발표 문장을 직접 만듭니다.
 7. 모든 출력은 한국어. 매우 간결하게. 전체 응답이 길어지면 안 됩니다.`;
 
@@ -133,6 +135,29 @@ ${typeBrief(t)}
 6. good은 2개 이내, fix는 3개 이내. 고칠 점이 없으면 fix는 빈 배열로 둡니다.
 7. 각 항목은 한 문장. 발표자를 격려하는 따뜻한 말투의 한국어("~해요"체)로 씁니다.`;
 
+const sysFind = (t) => `당신은 발표 질의응답을 돕는 검색 도우미입니다.
+
+${typeBrief(t)}
+
+발표가 끝나고 청중이 한 질문과, 발표 슬라이드 목록을 받습니다.
+발표자가 답할 때 근거로 쓸 수 있는 슬라이드를 고릅니다.
+
+반드시 아래 JSON만 출력하십시오. 코드펜스 금지.
+
+{
+  "hits": [{ "n": 3, "why": "정류장 10곳·3개월 시범 운영이 나오는 장" }],
+  "none": ""
+}
+
+규칙:
+1. 질문의 낱말이 슬라이드와 달라도 뜻이 같으면 찾습니다. 예: "돌려주지 않으면"과 "반납", "몇 군데에서 시험"과 "10곳에서 시범 운영".
+2. hits는 관련이 큰 순서로 3개 이내. n은 목록에 있는 슬라이드 번호만 씁니다.
+3. why는 그 슬라이드에 질문과 관련된 무엇이 있는지 30자 이내의 한 구절로 씁니다.
+4. 답변을 대신 쓰지 않습니다. why에 "~라고 답하세요" 같은 말을 넣지 않습니다.
+5. 자료에 답할 근거가 없으면 hits를 빈 배열로 두고, none에 "자료에 분실 비용에 대한 내용이 없어요"처럼 한 문장을 씁니다.
+   억지로 비슷한 슬라이드를 고르지 않습니다.
+6. 모든 출력은 한국어.`;
+
 export default async (req) => {
   if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
@@ -151,6 +176,7 @@ export default async (req) => {
     if (b.mode === "questions") return await questions(key, b, t);
     if (b.mode === "gaps") return await gaps(key, b, t);
     if (b.mode === "coach") return await coach(key, b, t);
+    if (b.mode === "find") return await find(key, b, t);
     return await slide(key, b, t);
   } catch (e) {
     return json(
@@ -244,6 +270,38 @@ async function coach(key, b, t) {
       next: str(p.next, 200),
     },
   });
+}
+
+// 질의응답 검색. 화면이 보낸 슬라이드 요약(제목·핵심·대본 문장) 안에서만 고른다.
+async function find(key, b, t) {
+  const question = String(b.question || "").trim().slice(0, 300);
+  if (!question) return json({ error: "질문이 비어 있습니다." }, 400);
+  const slides = (Array.isArray(b.slides) ? b.slides : []).slice(0, 60).map((s) => ({
+    n: Number(s?.n) || 0,
+    title: String(s?.title || "").slice(0, 60),
+    items: (Array.isArray(s?.items) ? s.items : []).map((x) => String(x).slice(0, 80)).slice(0, 6),
+    lines: (Array.isArray(s?.lines) ? s.lines : []).map((x) => String(x).slice(0, 160)).slice(0, 6),
+  })).filter((s) => s.n > 0);
+  if (!slides.length) return json({ error: "슬라이드 정보가 없습니다." }, 400);
+
+  const list = slides
+    .map((s) => `[${s.n}] ${s.title}\n핵심: ${s.items.join(" / ") || "없음"}\n대본: ${s.lines.join(" ") || "없음"}`)
+    .join("\n\n")
+    .slice(0, 9000);
+  const p = await call(key, sysFind(t), `## 질문\n${question}\n\n## 슬라이드 목록\n${list}`, 400);
+
+  // 목록에 없는 번호는 버린다. 같은 번호가 두 번 나오면 한 번만 쓴다.
+  const known = new Set(slides.map((s) => s.n));
+  const seen = new Set();
+  const hits = [];
+  for (const h of Array.isArray(p.hits) ? p.hits : []) {
+    const n = Number(h?.n);
+    if (!known.has(n) || seen.has(n)) continue;
+    seen.add(n);
+    hits.push({ n, why: String(h?.why || "").slice(0, 60) });
+    if (hits.length === 3) break;
+  }
+  return json({ hits, none: hits.length ? "" : String(p.none || "").slice(0, 100) });
 }
 
 async function call(key, system, user, maxTokens) {

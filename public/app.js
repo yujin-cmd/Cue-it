@@ -1,7 +1,7 @@
 import { evaluateSlide, currentLineIndex, normalize } from "./match.js";
 import { savePdf, loadPdf, saveDeck, loadDeck, saveReport, loadReports, updateLatestReport, saveType, loadType } from "./store.js";
 import { TYPES, TYPE_KEYS, typeOf, typeKey, levelKey, levelLabel } from "./presets.js";
-import { DEMO_DECK, DEMO_PDF, DEMO_SCRIPT, DEMO_COACH, DEMO_QA, DEMO_ASK, DEMO_SCRIPT_TEXT } from "./demo/demo.js";
+import { DEMO_DECK, DEMO_PDF, DEMO_SCRIPT, DEMO_COACH, DEMO_QA, DEMO_ASK, DEMO_FIND, DEMO_SCRIPT_TEXT } from "./demo/demo.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -496,7 +496,7 @@ async function speak(text, alive) {
 async function sceneReport(ok) {
   if (curStep !== "report") go("report");
   spot("#reportBody .tiles");
-  await tell("5단계 리포트예요. 걸린 시간, 놓친 핵심, 큐를 요청한 횟수가 기록으로 남아요.", ok);
+  await tell("5단계 리포트예요. 걸린 시간, 말이 막혀 큐를 요청한 횟수, 놓친 핵심이 기록으로 남아요.", ok);
   if (!ok()) return false;
   spot("#reportBody .rep .sec");
   await tell("어떤 핵심을 놓쳤는지, 슬라이드마다 시간을 얼마나 썼는지도 보여줘요.", ok);
@@ -515,7 +515,13 @@ async function sceneQna(ok) {
   if (!ok()) return false;
   renderQna(DEMO_ASK);
   spot("#qResult");
-  await tell("질문과 이어지는 슬라이드와 미리 준비한 핵심 단어를 찾아줘요. 답변은 발표자가 직접 해요.", ok);
+  await tell("일부러 슬라이드와 다른 말로 물었어요. 같은 낱말이 없어도, AI가 질문의 뜻을 읽고 관련 슬라이드를 찾아줘요.", ok);
+  if (!ok()) return false;
+  // AI가 찾은 결과(체험에서는 미리 받아 둔 것)가 화면에 올 때까지 기다린다
+  for (let i = 0; i < 60 && ok() && !$("#qResult .hit"); i++) await sleep(100);
+  if (!ok()) return false;
+  spot("#qResult .hit");
+  await tell("AI는 슬라이드만 골라 줘요. 답변은 대신 쓰지 않고, 발표자가 직접 해요.", ok);
   if (!ok()) return false;
   spot("#qResult .goto");
   await tell("「이 슬라이드 띄우기」를 누르면 청중이 보는 슬라이드 창이 그 장으로 바로 넘어가요.", ok);
@@ -1321,12 +1327,26 @@ function paint() {
 /* 큐 주세요 — 말이 막혔을 때 다음 문장을 보여준다 */
 let stuckEcho = null;   // 큐로 본 문장 — 닫힌 뒤에도 자리에 남긴다
 
+// 지금까지 한 말을 따라가서, 이어서 말할 문장을 고른다.
+// 발표 중에는 AI를 부르지 않는다. 미리 받아 둔 대본 문장과 지금까지 들은 말을 대조한다.
+function nextCueLine() {
+  const sl = deck.slides[cur];
+  const lines = sl.lines || [];
+  const idx = currentLineIndex(buffers[cur], lines);
+  if (idx + 1 < lines.length) return lines[idx + 1];
+  // 이 장의 대본을 끝까지 말했다면, 남은 핵심이나 다음 장을 알려준다
+  const remain = sl.items.filter((i) => !spoken.has(i.id));
+  if (remain.length) return `아직 말하지 않은 핵심이에요: ${remain[0].label}`;
+  const nx = deck.slides[cur + 1];
+  if (nx) return `이 장은 다 말했어요. 다음 장은 「${nx.title}」이에요.`;
+  return "준비한 내용을 모두 말했어요. 마무리 인사로 끝내세요.";
+}
+
 function showStuck() {
   if (!deck) return;
   stuckCount++;
   const sl = deck.slides[cur];
-  const idx = currentLineIndex(buffers[cur], sl.lines);
-  const line = sl.lines[idx + 1] || sl.lines[0] || "다음 내용을 이어서 설명하겠습니다.";
+  const line = nextCueLine();
   const remain = sl.items.filter((i) => !spoken.has(i.id)).slice(0, 3);
   $("#spLine").textContent = line;
   $("#spKw").innerHTML = remain.length
@@ -1648,26 +1668,104 @@ function findRelated(question) {
     .slice(0, 3);
 }
 
+/* 질의응답 검색은 두 단계다.
+   1) 같은 낱말이 있는 슬라이드를 브라우저 안에서 바로 보여 준다 (기다림 없음, 인터넷이 끊겨도 동작).
+   2) AI에게 질문의 뜻으로 다시 찾게 해서, 1~3초 뒤 더 맞는 슬라이드로 보완한다.
+   AI는 슬라이드만 고르고 답변은 쓰지 않는다. 체험(샘플)에서는 AI를 부르지 않는다. */
+let qnaSeq = 0;
+
 function renderQna(question) {
   const box = $("#qResult");
   if (!deck) {
     box.innerHTML = `<div class="empty">먼저 1단계에서 발표 자료를 분석해 주세요.</div>`;
     return;
   }
-  const hits = findRelated(question);
+  const q = String(question || "").trim();
+  if (!q) return;
+  const seq = ++qnaSeq;
+  const kw = findRelated(q).map((h) => ({ ...h, src: "word" }));
+  drawQna(kw, { status: "AI가 질문의 뜻을 읽고 관련 슬라이드를 더 찾고 있어요", busy: true });
+
+  aiFind(q)
+    .then((r) => {
+      if (seq !== qnaSeq || !r) return;
+      if (r.skipped) {
+        drawQna(kw, {
+          status: kw.length
+            ? "체험에서는 AI 검색을 부르지 않아요. 같은 낱말로 찾은 결과예요."
+            : "체험에서는 AI 검색을 부르지 않아요. 같은 낱말이 있는 슬라이드가 없으니, 질문의 핵심 단어를 넣어 다시 찾아 주세요.",
+        });
+        return;
+      }
+      const ai = (r.hits || [])
+        .map((h) => {
+          const sl = deck.slides.find((s) => s.n === h.n);
+          if (!sl) return null;
+          const k = kw.find((x) => x.sl.n === h.n);
+          return { sl, lines: k ? k.lines : [], why: h.why, src: "ai" };
+        })
+        .filter(Boolean);
+      // AI가 고른 슬라이드를 앞에 두고, 낱말로만 찾은 슬라이드는 뒤에 붙인다
+      const merged = [...ai, ...kw.filter((k) => !ai.some((a) => a.sl.n === k.sl.n))].slice(0, 3);
+      const status = ai.length
+        ? ""
+        : r.none
+        ? `AI 확인: ${r.none}`
+        : kw.length
+        ? "AI도 뜻이 가까운 슬라이드를 더 찾지 못했어요."
+        : "관련 슬라이드를 찾지 못했어요.";
+      drawQna(merged, { status, none: !ai.length, fresh: ai.map((a) => a.sl.n) });
+    })
+    .catch(() => {
+      if (seq !== qnaSeq) return;
+      drawQna(kw, {
+        status: kw.length
+          ? "AI 검색을 쓰지 못해, 같은 낱말로 찾은 결과만 보여요."
+          : "AI 검색을 쓰지 못했고, 같은 낱말이 있는 슬라이드도 없어요. 질문의 핵심 단어를 넣어 다시 찾아 주세요.",
+      });
+    });
+}
+
+// AI에게 뜻으로 찾게 한다. 체험(샘플)에서는 미리 받아 둔 결과만 쓴다.
+async function aiFind(q) {
+  if (deck.demo) {
+    const f = DEMO_FIND[q];
+    if (!f) return { skipped: true };
+    await sleep(demoOn ? 1400 : 900);
+    return f;
+  }
+  const slides = deck.slides.map((s) => ({
+    n: s.n,
+    title: s.title,
+    items: s.items.map((i) => i.label),
+    lines: s.lines || [],
+  }));
+  return await post({ mode: "find", type: deck.type, question: q, slides });
+}
+
+function drawQna(hits, opt = {}) {
+  const box = $("#qResult");
+  const fresh = new Set(opt.fresh || []);
+  const status = opt.status
+    ? `<div class="q-status${opt.busy ? " busy" : ""}${opt.none ? " none" : ""}">${esc(opt.status)}</div>`
+    : "";
   if (!hits.length) {
-    box.innerHTML = `<div class="empty">관련 슬라이드를 찾지 못했어요. 질문의 핵심 단어를 넣어 다시 찾아 주세요.</div>`;
+    box.innerHTML = status || `<div class="empty">관련 슬라이드를 찾지 못했어요.</div>`;
     return;
   }
-  box.innerHTML = hits
-    .map(
-      (h, i) => `
-    <div class="hit${i === 0 ? " top" : ""}">
+  box.innerHTML =
+    status +
+    hits
+      .map(
+        (h, i) => `
+    <div class="hit${i === 0 ? " top" : ""}${fresh.has(h.sl.n) ? " fresh" : ""}">
       <div class="hit-h">
         <span class="sn">슬라이드 ${h.sl.n}</span>
         <span class="st">${esc(h.sl.title)}</span>
+        <span class="src${h.src === "ai" ? " ai" : ""}">${h.src === "ai" ? "AI · 뜻으로 찾음" : "같은 낱말"}</span>
         <button class="goto" data-n="${h.sl.n}">이 슬라이드 띄우기</button>
       </div>
+      ${h.why ? `<div class="why"><b>관련 내용</b>${esc(h.why)}</div>` : ""}
       <div class="prep">${h.sl.items
         .map((it) => `<em>${esc(it.label)}</em>`)
         .join("")}</div>
@@ -1677,8 +1775,8 @@ function renderQna(question) {
           : ""
       }
     </div>`
-    )
-    .join("");
+      )
+      .join("");
 
   box.querySelectorAll(".goto").forEach((b) => {
     b.onclick = () => {

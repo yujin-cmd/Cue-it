@@ -166,7 +166,8 @@ export function isSpoken(buffer, item) {
   const nums = label.match(/\d+/g) || [];
   const words = meaningfulTokens(item.label);
   if (nums.length) {
-    const numHit = nums.some((n) => buf.includes(n));
+    // 숫자는 통째로 맞아야 한다. "1"이 "120" 안에 들어 있다고 맞은 것으로 보지 않는다.
+    const numHit = nums.some((n) => new RegExp(`(?<!\\d)${n}(?!\\d)`).test(buf));
     if (numHit) {
       const other = words.filter((w) => !/^\d+$/.test(w));
       if (!other.length || other.some((w) => wordAppears(buf, w))) return true;
